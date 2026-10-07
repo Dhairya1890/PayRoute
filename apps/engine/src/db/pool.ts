@@ -1,8 +1,33 @@
 import pg from 'pg';
 const { Pool } = pg;
 
+export function sanitizeConnectionUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  let cleaned = url.trim();
+  // Strip variable name prefix if accidentally pasted (e.g. DATABASE_URL=... or REDIS_URL=...)
+  cleaned = cleaned.replace(/^[A-Z0-9_]+\s*=\s*/i, '').trim();
+  // Strip surrounding quotes: ", ', `
+  cleaned = cleaned.replace(/^["'`]+|["'`]+$/g, '').trim();
+  // Strip trailing encoded quotes (%22 or %27) if present
+  cleaned = cleaned.replace(/(%22|%27)+$/gi, '').trim();
+  // Strip surrounding quotes again if wrapped in nested quotes
+  cleaned = cleaned.replace(/^["'`]+|["'`]+$/g, '').trim();
+
+  // If someone pasted a host without protocol scheme:
+  if (
+    cleaned.includes('neon.tech') &&
+    !cleaned.startsWith('postgres://') &&
+    !cleaned.startsWith('postgresql://')
+  ) {
+    cleaned = `postgresql://${cleaned.replace(/^\/+/, '')}`;
+  }
+  return cleaned || undefined;
+}
+
+const rawDbUrl = process.env.DATABASE_URL;
 const connectionString =
-  process.env.DATABASE_URL || 'postgres://payroute:payroute_secret@localhost:5433/payroute';
+  sanitizeConnectionUrl(rawDbUrl) ||
+  'postgres://payroute:payroute_secret@localhost:5433/payroute';
 
 /**
  * Shared PostgreSQL connection pool.
@@ -11,8 +36,10 @@ const connectionString =
  */
 const isSsl =
   connectionString.includes('sslmode=require') ||
+  connectionString.includes('sslmode=verify-full') ||
   connectionString.includes('neon.tech') ||
-  connectionString.includes('supabase.co');
+  connectionString.includes('supabase.co') ||
+  connectionString.includes('render.com');
 
 export const pool = new Pool({
   connectionString,
@@ -20,6 +47,10 @@ export const pool = new Pool({
   idleTimeoutMillis: 1000,
   connectionTimeoutMillis: 10000,
   ...(isSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+});
+
+pool.on('error', (err) => {
+  console.warn('[Postgres Pool] Idle client warning:', err.message);
 });
 
 /**

@@ -23,8 +23,13 @@ export async function runMigrations(): Promise<string[]> {
       );
     `);
 
-    // 2. Locate migrations directory (at repo root /migrations)
-    const migrationsDir = path.resolve(__dirname, '../../../../migrations');
+    // 2. Locate migrations directory (check relative to __dirname and process.cwd())
+    let migrationsDir = path.resolve(__dirname, '../../../../migrations');
+    try {
+      await fs.access(migrationsDir);
+    } catch {
+      migrationsDir = path.resolve(process.cwd(), 'migrations');
+    }
     const files = await fs.readdir(migrationsDir);
     const sqlFiles = files.filter((f) => f.endsWith('.sql')).sort();
 

@@ -81,15 +81,20 @@ export class HealthTracker {
     this.subRedis.on('error', () => {
       // Ignore subscriber errors on shutdown or connection reset
     });
-    await this.subRedis.subscribe(this.channel);
-    this.subRedis.on('message', (channel: string, message: string) => {
-      if (channel === this.channel) {
-        this.handleBreakerEvent(message);
-      }
-    });
+    try {
+      await this.subRedis.subscribe(this.channel);
+      this.subRedis.on('message', (channel: string, message: string) => {
+        if (channel === this.channel) {
+          this.handleBreakerEvent(message);
+        }
+      });
 
-    // 2. Perform initial sync
-    await this.refreshSnapshot();
+      // 2. Perform initial sync
+      await this.refreshSnapshot();
+    } catch (err: any) {
+      console.warn('[HealthTracker] Initial Redis handshake delayed, running with cached state:', err.message);
+      this.degraded = true;
+    }
 
     // 3. Start 1-second background refresh loop
     this.intervalHandle = setInterval(() => {

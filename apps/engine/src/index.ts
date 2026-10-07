@@ -6,8 +6,8 @@ import path from 'node:path';
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
 
-import { Redis } from 'ioredis';
-import { pool } from './db/pool.js';
+import { Redis, type RedisOptions } from 'ioredis';
+import { pool, sanitizeConnectionUrl } from './db/pool.js';
 import { PaymentRepository } from './db/payment-repository.js';
 import { CircuitBreakerManager } from './resilience/circuit-breaker-manager.js';
 import { HealthTracker } from './resilience/health-tracker.js';
@@ -42,17 +42,43 @@ export async function startServer(port = 3000): Promise<void> {
     console.warn(`[Migrations] Migration runner warning: ${err.message}`);
   }
 
-  const redisUrl = process.env.REDIS_URL;
+  const rawRedisUrl = process.env.REDIS_URL;
+  let cleanRedisUrl = sanitizeConnectionUrl(rawRedisUrl);
+  if (cleanRedisUrl && cleanRedisUrl.includes('upstash.io')) {
+    if (!cleanRedisUrl.startsWith('redis://') && !cleanRedisUrl.startsWith('rediss://')) {
+      cleanRedisUrl = `rediss://${cleanRedisUrl.replace(/^\/+/, '')}`;
+    } else if (cleanRedisUrl.startsWith('redis://')) {
+      cleanRedisUrl = cleanRedisUrl.replace(/^redis:\/\//, 'rediss://');
+    }
+  }
+
   const redisHost = process.env.REDIS_HOST || '127.0.0.1';
   const redisPort = parseInt(process.env.REDIS_PORT || '6380', 10);
   const targetEnv = process.env.PROVIDER_TARGET || 'lab';
 
-  const redis = redisUrl
-    ? new Redis(redisUrl)
-    : new Redis({ host: redisHost, port: redisPort });
-  const subRedis = redisUrl
-    ? new Redis(redisUrl, { enableReadyCheck: false })
-    : new Redis({ host: redisHost, port: redisPort, enableReadyCheck: false });
+  const isRedisTls = cleanRedisUrl?.startsWith('rediss://') || false;
+  const redisOptions: RedisOptions = {
+    maxRetriesPerRequest: null,
+    retryStrategy(times) {
+      return Math.min(times * 100, 3000);
+    },
+    ...(isRedisTls ? { tls: { rejectUnauthorized: false } } : {}),
+  };
+
+  const redis = cleanRedisUrl
+    ? new Redis(cleanRedisUrl, redisOptions)
+    : new Redis({ host: redisHost, port: redisPort, ...redisOptions });
+
+  const subRedis = cleanRedisUrl
+    ? new Redis(cleanRedisUrl, { ...redisOptions, enableReadyCheck: false })
+    : new Redis({ host: redisHost, port: redisPort, ...redisOptions, enableReadyCheck: false });
+
+  redis.on('error', (err) => {
+    console.warn('[Redis] Connection warning:', err.message);
+  });
+  subRedis.on('error', (err) => {
+    console.warn('[SubRedis] Connection warning:', err.message);
+  });
 
   const paymentRepo = new PaymentRepository(pool);
   const breakerManager = new CircuitBreakerManager({ redis });
