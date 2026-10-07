@@ -31,6 +31,10 @@ describe('Payment Orchestrator - Core Routing & Invariants', () => {
     });
     await healthTracker.init();
 
+    // Reset routing strategy and exploration share to deterministic defaults
+    await pool.query(`UPDATE engine_settings SET value = '"priority"'::jsonb WHERE key = 'routing_strategy'`);
+    await pool.query(`UPDATE engine_settings SET value = '0'::jsonb WHERE key = 'exploration_share'`);
+
     // Create a unique test business
     const res = await pool.query(
       `INSERT INTO businesses (name) VALUES ('Orchestrator Test Business') RETURNING id`
@@ -179,6 +183,7 @@ describe('Payment Orchestrator - Core Routing & Invariants', () => {
         ['payu', payu],
       ]),
       strategy: 'priority',
+      explorationShare: 0,
     });
 
     const result = await orchestrator.execute({

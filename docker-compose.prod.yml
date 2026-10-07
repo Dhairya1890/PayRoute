@@ -1,0 +1,85 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: payroute-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-payroute}
+      POSTGRES_USER: ${POSTGRES_USER:-payroute}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payroute_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-payroute} -d ${POSTGRES_DB:-payroute}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - payroute-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: payroute-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_prod_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - payroute-net
+
+  provider-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile.provider-lab
+    container_name: payroute-provider-lab
+    restart: always
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PROVIDER_LAB_PORT: 4000
+      HOST: 0.0.0.0
+    networks:
+      - payroute-net
+
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile.engine
+    container_name: payroute-engine
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      provider-lab:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      ENGINE_PORT: 3000
+      PROVIDER_TARGET: lab
+      PROVIDER_LAB_URL: http://provider-lab:4000
+      DATABASE_URL: postgres://payroute:payroute_secret@postgres:5432/payroute
+      REDIS_URL: redis://redis:6379
+      ENGINE_API_KEY: ${ENGINE_API_KEY:-pr_test_engine_key_secret}
+    networks:
+      - payroute-net
+
+volumes:
+  postgres_prod_data:
+  redis_prod_data:
+
+networks:
+  payroute-net:
+    driver: bridge

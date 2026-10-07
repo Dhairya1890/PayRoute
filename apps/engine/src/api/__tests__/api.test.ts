@@ -80,6 +80,9 @@ describe('PayRoute Engine API - End-to-End Integration', () => {
   });
 
   afterEach(async () => {
+    await pool.query(`UPDATE engine_settings SET value = '"priority"'::jsonb WHERE key = 'routing_strategy'`);
+    await pool.query(`UPDATE engine_settings SET value = '0.05'::jsonb WHERE key = 'exploration_share'`);
+    await pool.query(`UPDATE provider_config SET cost_bps = 190 WHERE name = 'razorpay'`);
     await app.close();
     await healthTracker.close();
     await redis.quit();

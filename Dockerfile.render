@@ -1,0 +1,62 @@
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/core/package.json ./packages/core/
+COPY packages/providers/package.json ./packages/providers/
+COPY apps/engine/package.json ./apps/engine/
+COPY apps/provider-lab/package.json ./apps/provider-lab/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/shared ./packages/shared
+COPY packages/core ./packages/core
+COPY packages/providers ./packages/providers
+COPY apps/engine ./apps/engine
+COPY apps/provider-lab ./apps/provider-lab
+COPY migrations ./migrations
+
+RUN pnpm --filter @payroute/shared run build && \
+    pnpm --filter @payroute/core run build && \
+    pnpm --filter @payroute/providers run build && \
+    pnpm --filter @payroute/provider-lab run build && \
+    pnpm --filter @payroute/engine run build
+
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages/shared/package.json ./packages/shared/
+COPY packages/core/package.json ./packages/core/
+COPY packages/providers/package.json ./packages/providers/
+COPY apps/engine/package.json ./apps/engine/
+COPY apps/provider-lab/package.json ./apps/provider-lab/
+
+RUN pnpm install --prod --frozen-lockfile
+
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/core/dist ./packages/core/dist
+COPY --from=builder /app/packages/providers/dist ./packages/providers/dist
+COPY --from=builder /app/apps/provider-lab/dist ./apps/provider-lab/dist
+COPY --from=builder /app/apps/engine/dist ./apps/engine/dist
+COPY --from=builder /app/migrations ./migrations
+
+ENV NODE_ENV=production
+ENV ENGINE_PORT=3000
+ENV PROVIDER_LAB_PORT=4000
+ENV PROVIDER_TARGET=lab
+ENV PROVIDER_LAB_URL=http://127.0.0.1:4000
+ENV HOST=0.0.0.0
+
+# Render exposes the web service port
+EXPOSE 3000
+
+# Starts Provider Lab on port 4000 in background, then Engine on port 3000 in foreground
+CMD ["sh", "-c", "node apps/provider-lab/dist/index.js & node apps/engine/dist/index.js"]

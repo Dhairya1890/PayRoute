@@ -9,11 +9,17 @@ const connectionString =
  * Note: pg driver parses BIGINT (OID 20) as string by default,
  * which preserves exact precision for our BigInt minor units.
  */
+const isSsl =
+  connectionString.includes('sslmode=require') ||
+  connectionString.includes('neon.tech') ||
+  connectionString.includes('supabase.co');
+
 export const pool = new Pool({
   connectionString,
   max: 12,
   idleTimeoutMillis: 1000,
   connectionTimeoutMillis: 10000,
+  ...(isSsl ? { ssl: { rejectUnauthorized: false } } : {}),
 });
 
 /**

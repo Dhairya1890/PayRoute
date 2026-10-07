@@ -102,8 +102,8 @@ export class PaymentOrchestrator {
 
     let currentPayment = initialPayment;
 
-    // If exact replay and payment is terminal or processing, return current record
-    if (isReplay && (currentPayment.status === 'succeeded' || currentPayment.status === 'failed')) {
+    // If exact replay, return current record (prevents concurrent replays from racing orchestration)
+    if (isReplay) {
       const attempts = await this.paymentRepo.getAttemptsForPayment(currentPayment.id);
       return { payment: currentPayment, attempts, isReplay: true };
     }

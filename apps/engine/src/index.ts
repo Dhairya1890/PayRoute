@@ -29,13 +29,30 @@ export * from './api/chat-routes.js';
 export * from './invariants/invariant-checker.js';
 export * from './worker/resolution-worker.js';
 
+import { runMigrations } from './db/migrate.js';
+
 export async function startServer(port = 3000): Promise<void> {
+  // 1. Run migrations to ensure PostgreSQL schema is initialized
+  try {
+    const applied = await runMigrations();
+    if (applied.length > 0) {
+      console.log(`[Migrations] Applied ${applied.length} migration(s): ${applied.join(', ')}`);
+    }
+  } catch (err: any) {
+    console.warn(`[Migrations] Migration runner warning: ${err.message}`);
+  }
+
+  const redisUrl = process.env.REDIS_URL;
   const redisHost = process.env.REDIS_HOST || '127.0.0.1';
   const redisPort = parseInt(process.env.REDIS_PORT || '6380', 10);
   const targetEnv = process.env.PROVIDER_TARGET || 'lab';
 
-  const redis = new Redis({ host: redisHost, port: redisPort });
-  const subRedis = new Redis({ host: redisHost, port: redisPort, enableReadyCheck: false });
+  const redis = redisUrl
+    ? new Redis(redisUrl)
+    : new Redis({ host: redisHost, port: redisPort });
+  const subRedis = redisUrl
+    ? new Redis(redisUrl, { enableReadyCheck: false })
+    : new Redis({ host: redisHost, port: redisPort, enableReadyCheck: false });
 
   const paymentRepo = new PaymentRepository(pool);
   const breakerManager = new CircuitBreakerManager({ redis });
