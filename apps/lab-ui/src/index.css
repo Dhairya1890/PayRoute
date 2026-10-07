@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+/* ─── PayRoute Design System Tokens ─── */
+@theme {
+  /* Surface elevation scale (dark mode) */
+  --color-background: #131313;
+  --color-surface: #131313;
+  --color-surface-container-lowest: #0e0e0e;
+  --color-surface-container-low: #1c1b1b;
+  --color-surface-container: #201f1f;
+  --color-surface-container-high: #2a2a2a;
+  --color-surface-container-highest: #353534;
+
+  /* Text colors */
+  --color-on-surface: #EDEDED;
+  --color-on-surface-variant: #c4c7c7;
+  --color-text-secondary: #9E9E9E;
+  --color-text-tertiary: #707070;
+
+  /* Border colors */
+  --color-outline: #8e9192;
+  --color-outline-variant: #444748;
+
+  /* Primary */
+  --color-primary: #EDEDED;
+  --color-on-primary: #131313;
+
+  /* Semantic status */
+  --color-success: #4ADE80;
+  --color-warning: #FBBF24;
+  --color-error: #F87171;
+
+  /* Typography */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+/* ─── Global Resets ─── */
+html, body {
+  margin: 0;
+  padding: 0;
+  overscroll-behavior: none;
+  background-color: #131313;
+  color: #EDEDED;
+}
+
+/* Hide scrollbars but allow scrolling */
+::-webkit-scrollbar {
+  display: none;
+}
+
+* {
+  scrollbar-width: none;
+}
+
+/* ─── Hide native number input spinners across all browsers ─── */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* ─── Material Symbols helper ─── */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  font-size: inherit;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+/* ─── Custom Select Trigger (matches HTML design) ─── */
+.custom-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  border: 1px solid #444748;
+  border-radius: 6px;
+  background-color: #0e0e0e;
+  padding: 0 8px;
+  cursor: pointer;
+  user-select: none;
+  color: #EDEDED;
+  font-size: 12px;
+}
+
+.custom-select-trigger:hover {
+  background-color: #201f1f;
+}
+
+/* ─── Custom Range Slider ─── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+  height: 6px;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  background: #262626;
+  height: 6px;
+  border-radius: 3px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #EDEDED;
+  border: 1px solid #171717;
+  border-radius: 3px;
+  margin-top: -4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+input[type="range"]::-moz-range-track {
+  background: #262626;
+  height: 6px;
+  border-radius: 3px;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #EDEDED;
+  border: 1px solid #171717;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* ─── Native select styling ─── */
+select {
+  background-color: #0e0e0e;
+  border: 1px solid #444748;
+  border-radius: 6px;
+  color: #EDEDED;
+  font-size: 12px;
+  height: 28px;
+  padding: 0 8px;
+  outline: none;
+  cursor: pointer;
+}
+
+select:hover {
+  background-color: #201f1f;
+}
+
+select option {
+  background-color: #131313;
+  color: #EDEDED;
+}
+
+/* ─── Main content layout helpers ─── */
+main > :first-child {
+  margin-top: 0 !important;
+}
+
+main > :last-child {
+  margin-bottom: 0 !important;
+}
