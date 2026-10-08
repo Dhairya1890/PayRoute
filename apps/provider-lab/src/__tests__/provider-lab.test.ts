@@ -144,4 +144,22 @@ describe('Provider Lab - Controlled Failure Server & Independent Charge Ledger',
 
     expect(res.statusCode).toBe(401);
   });
+
+  it('HEAD / and HEAD /health: respond with 200, headers, and empty body for monitoring', async () => {
+    const headRoot = await app.inject({ method: 'HEAD', url: '/' });
+    expect(headRoot.statusCode).toBe(200);
+    expect(headRoot.headers['x-service-name']).toBe('payroute-provider-lab');
+    expect(headRoot.headers['x-service-status']).toBe('ok');
+    expect(headRoot.body).toBe('');
+
+    const headHealth = await app.inject({ method: 'HEAD', url: '/health' });
+    expect(headHealth.statusCode).toBe(200);
+    expect(headHealth.headers['x-service-name']).toBe('payroute-provider-lab');
+    expect(headHealth.headers['x-service-status']).toBe('ok');
+    expect(headHealth.body).toBe('');
+
+    const getHealth = await app.inject({ method: 'GET', url: '/health' });
+    expect(getHealth.statusCode).toBe(200);
+    expect(JSON.parse(getHealth.body).status).toBe('ok');
+  });
 });

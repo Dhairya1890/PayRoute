@@ -20,8 +20,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   // 1. CORS plugin
   await app.register(cors, {
     origin: true,
-    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-api-key', 'idempotency-key', 'x-business-id'],
+    exposedHeaders: ['x-service-status', 'x-service-name', 'x-service-version', 'x-uptime-seconds'],
   });
 
   // 2. Authentication hook (unless explicitly disabled for testing)

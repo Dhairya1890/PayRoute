@@ -63,6 +63,15 @@ interface BatchTracking {
 
 const activeBatches = new Map<string, BatchTracking>();
 
+async function getOrCreateLabBusiness(): Promise<string> {
+  const bizRes = await pool.query("SELECT id FROM businesses WHERE name = 'Routing Lab Tenant' LIMIT 1");
+  if (bizRes.rows.length > 0) {
+    return bizRes.rows[0].id;
+  }
+  const createBiz = await pool.query("INSERT INTO businesses (name) VALUES ('Routing Lab Tenant') RETURNING id");
+  return createBiz.rows[0].id;
+}
+
 export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
   const providerLabUrl = process.env.PROVIDER_LAB_URL || 'http://127.0.0.1:4000';
 
@@ -149,12 +158,7 @@ export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
       activeBatches.set(batchId, { totalCount: params.count, status: 'running' });
 
       // Get or create default business
-      const bizRes = await pool.query("SELECT id FROM businesses WHERE name = 'Routing Lab Tenant' LIMIT 1");
-      let businessId = bizRes.rows[0]?.id;
-      if (!businessId) {
-        const createBiz = await pool.query("INSERT INTO businesses (name) VALUES ('Routing Lab Tenant') RETURNING id");
-        businessId = createBiz.rows[0].id;
-      }
+      const businessId = await getOrCreateLabBusiness();
 
       // Ensure at least one provider supporting the requested method is enabled
       const enabledRes = await pool.query(
@@ -447,8 +451,7 @@ async function runScenario(
   providerLabUrl: string
 ) {
   // Get business ID
-  const bizRes = await pool.query("SELECT id FROM businesses WHERE name = 'Routing Lab Tenant' LIMIT 1");
-  const businessId = bizRes.rows[0]?.id;
+  const businessId = await getOrCreateLabBusiness();
 
   // Reset provider modes & charges before starting scenario
   await fetch(`${providerLabUrl}/lab/charges/reset`, { method: 'POST' });

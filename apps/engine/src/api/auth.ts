@@ -20,9 +20,10 @@ export function timingSafeEqualStrings(a: string, b: string): boolean {
  * Expects `x-api-key` header or `Authorization: Bearer <key>`.
  */
 export async function authenticateApiKey(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  // Public health/readiness/config/chat endpoints do not require auth
-  const publicPaths = ['/health', '/ready', '/config', '/chat'];
-  if (publicPaths.some((p) => req.url === p || req.url.startsWith(`${p}?`))) {
+  // Public health/readiness/liveness/monitoring/config/chat endpoints do not require auth
+  const publicPaths = ['/', '/health', '/ready', '/live', '/config', '/chat'];
+  const urlPath = req.url.split('?')[0] || '';
+  if (publicPaths.some((p) => urlPath === p || (p !== '/' && urlPath.startsWith(`${p}/`)))) {
     return;
   }
 

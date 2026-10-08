@@ -9,8 +9,40 @@ export async function buildProviderLabServer(): Promise<FastifyInstance> {
   await app.register(cors, { origin: true });
 
   // -------------------------------------------------------------
-  // Provider Lab Management Endpoints
+  // Provider Lab Management & Monitoring Endpoints
   // -------------------------------------------------------------
+
+  app.route({
+    method: ['GET', 'HEAD'],
+    url: '/',
+    handler: async (req, reply) => {
+      reply.header('x-service-name', 'payroute-provider-lab');
+      reply.header('x-service-status', 'ok');
+      reply.header('content-type', 'application/json; charset=utf-8');
+      if (req.method === 'HEAD') {
+        return reply.status(200).send();
+      }
+      return reply.status(200).send({
+        status: 'ok',
+        service: 'PayRoute Provider Lab',
+        environment: 'lab',
+      });
+    },
+  });
+
+  app.route({
+    method: ['GET', 'HEAD'],
+    url: '/health',
+    handler: async (req, reply) => {
+      reply.header('x-service-name', 'payroute-provider-lab');
+      reply.header('x-service-status', 'ok');
+      reply.header('content-type', 'application/json; charset=utf-8');
+      if (req.method === 'HEAD') {
+        return reply.status(200).send();
+      }
+      return reply.status(200).send({ status: 'ok', environment: 'lab' });
+    },
+  });
 
   app.get('/lab/status', async () => ({
     status: 'ok',

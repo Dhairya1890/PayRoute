@@ -27,54 +27,126 @@ const CreatePaymentSchema = z.object({
 export const apiRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
   return async (app: FastifyInstance) => {
     // -------------------------------------------------------------
-    // 1. Health & Readiness
+    // 1. Health & Monitoring Probes
     // -------------------------------------------------------------
-    app.get('/health', async (_req, reply) => {
-      return reply.send({ status: 'ok', timestamp: new Date().toISOString() });
-    });
-
-    app.get('/ready', async (_req, reply) => {
-      let pgOk = false;
-      let redisOk = false;
-
-      try {
-        await pool.query('SELECT 1');
-        pgOk = true;
-      } catch {
-        pgOk = false;
-      }
-
-      try {
-        const ping = await deps.redis.ping();
-        redisOk = ping === 'PONG';
-      } catch {
-        redisOk = false;
-      }
-
-      const isDegraded = deps.healthTracker.isDegraded();
-
-      if (!pgOk) {
-        return reply.status(503).send({ status: 'down', postgres: false, redis: redisOk });
-      }
-
-      if (!redisOk || isDegraded) {
+    // Root heartbeat & uptime probe (supports HEAD and GET for load balancers & monitoring services)
+    app.route({
+      method: ['GET', 'HEAD'],
+      url: '/',
+      handler: async (req, reply) => {
+        reply.header('x-service-name', 'payroute-engine');
+        reply.header('x-service-status', 'ok');
+        reply.header('x-uptime-seconds', Math.floor(process.uptime()).toString());
+        reply.header('content-type', 'application/json; charset=utf-8');
+        if (req.method === 'HEAD') {
+          return reply.status(200).send();
+        }
         return reply.status(200).send({
-          status: 'degraded',
-          postgres: true,
-          redis: redisOk,
-          message: 'Running in Redis degraded mode (using in-memory health snapshot)',
+          status: 'ok',
+          service: 'PayRoute Engine',
+          version: '0.1.0',
+          timestamp: new Date().toISOString(),
         });
-      }
-
-      return reply.status(200).send({ status: 'ready', postgres: true, redis: true });
+      },
     });
 
-    app.get('/config', async () => {
-      return {
-        environment: process.env.PROVIDER_TARGET || 'lab',
-        version: '0.1.0',
-        node: process.version,
-      };
+    // Health check endpoint (supports HEAD and GET for uptime monitors)
+    app.route({
+      method: ['GET', 'HEAD'],
+      url: '/health',
+      handler: async (req, reply) => {
+        reply.header('x-service-name', 'payroute-engine');
+        reply.header('x-service-status', 'ok');
+        reply.header('x-uptime-seconds', Math.floor(process.uptime()).toString());
+        reply.header('content-type', 'application/json; charset=utf-8');
+        if (req.method === 'HEAD') {
+          return reply.status(200).send();
+        }
+        return reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+      },
+    });
+
+    // Liveness probe endpoint (supports HEAD and GET for container orchestrators)
+    app.route({
+      method: ['GET', 'HEAD'],
+      url: '/live',
+      handler: async (req, reply) => {
+        reply.header('x-service-name', 'payroute-engine');
+        reply.header('x-service-status', 'ok');
+        reply.header('x-uptime-seconds', Math.floor(process.uptime()).toString());
+        reply.header('content-type', 'application/json; charset=utf-8');
+        if (req.method === 'HEAD') {
+          return reply.status(200).send();
+        }
+        return reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+      },
+    });
+
+    // Readiness probe endpoint (supports HEAD and GET for dependency verification)
+    app.route({
+      method: ['GET', 'HEAD'],
+      url: '/ready',
+      handler: async (req, reply) => {
+        reply.header('x-service-name', 'payroute-engine');
+        reply.header('content-type', 'application/json; charset=utf-8');
+        let pgOk = false;
+        let redisOk = false;
+
+        try {
+          await pool.query('SELECT 1');
+          pgOk = true;
+        } catch {
+          pgOk = false;
+        }
+
+        try {
+          const ping = await deps.redis.ping();
+          redisOk = ping === 'PONG';
+        } catch {
+          redisOk = false;
+        }
+
+        const isDegraded = deps.healthTracker.isDegraded();
+
+        if (!pgOk) {
+          reply.header('x-service-status', 'down');
+          if (req.method === 'HEAD') {
+            return reply.status(503).send();
+          }
+          return reply.status(503).send({ status: 'down', postgres: false, redis: redisOk });
+        }
+
+        if (!redisOk || isDegraded) {
+          reply.header('x-service-status', 'degraded');
+          if (req.method === 'HEAD') {
+            return reply.status(200).send();
+          }
+          return reply.status(200).send({
+            status: 'degraded',
+            postgres: true,
+            redis: redisOk,
+            message: 'Running in Redis degraded mode (using in-memory health snapshot)',
+          });
+        }
+
+        reply.header('x-service-status', 'ready');
+        if (req.method === 'HEAD') {
+          return reply.status(200).send();
+        }
+        return reply.status(200).send({ status: 'ready', postgres: true, redis: true });
+      },
+    });
+
+    app.route({
+      method: ['GET', 'HEAD'],
+      url: '/config',
+      handler: async () => {
+        return {
+          environment: process.env.PROVIDER_TARGET || 'lab',
+          version: '0.1.0',
+          node: process.version,
+        };
+      },
     });
 
     // -------------------------------------------------------------

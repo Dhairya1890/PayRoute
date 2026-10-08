@@ -37,9 +37,12 @@ export async function startServer(port = 3000): Promise<void> {
     const applied = await runMigrations();
     if (applied.length > 0) {
       console.log(`[Migrations] Applied ${applied.length} migration(s): ${applied.join(', ')}`);
+    } else {
+      console.log('[Migrations] Schema is up to date');
     }
   } catch (err: any) {
-    console.warn(`[Migrations] Migration runner warning: ${err.message}`);
+    console.error(`[Migrations] Migration runner error: ${err.message}`);
+    throw err;
   }
 
   const rawRedisUrl = process.env.REDIS_URL;

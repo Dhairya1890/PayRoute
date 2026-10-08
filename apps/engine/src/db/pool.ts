@@ -1,4 +1,12 @@
+import dotenv from 'dotenv';
+import path from 'node:path';
 import pg from 'pg';
+
+// Ensure monorepo root .env is loaded regardless of process.cwd()
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '../.env') });
+
 const { Pool } = pg;
 
 export function sanitizeConnectionUrl(url?: string): string | undefined {

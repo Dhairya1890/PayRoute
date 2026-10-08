@@ -23,13 +23,30 @@ export async function runMigrations(): Promise<string[]> {
       );
     `);
 
-    // 2. Locate migrations directory (check relative to __dirname and process.cwd())
-    let migrationsDir = path.resolve(__dirname, '../../../../migrations');
-    try {
-      await fs.access(migrationsDir);
-    } catch {
-      migrationsDir = path.resolve(process.cwd(), 'migrations');
+    // 2. Locate migrations directory across possible runtime locations
+    const candidateDirs = [
+      path.resolve(__dirname, '../../../../migrations'),
+      path.resolve(__dirname, '../../../migrations'),
+      path.resolve(__dirname, '../../migrations'),
+      path.resolve(process.cwd(), 'migrations'),
+      path.resolve(process.cwd(), '../../migrations'),
+      path.resolve(process.cwd(), '../migrations'),
+    ];
+    let migrationsDir = '';
+    for (const dir of candidateDirs) {
+      try {
+        await fs.access(dir);
+        migrationsDir = dir;
+        break;
+      } catch {
+        // try next candidate
+      }
     }
+
+    if (!migrationsDir) {
+      throw new Error('Migrations directory could not be located in any known candidate path');
+    }
+
     const files = await fs.readdir(migrationsDir);
     const sqlFiles = files.filter((f) => f.endsWith('.sql')).sort();
 
@@ -44,9 +61,14 @@ export async function runMigrations(): Promise<string[]> {
         const filePath = path.join(migrationsDir, file);
         const sql = await fs.readFile(filePath, 'utf8');
 
+        // Strip file-level BEGIN/COMMIT so the migration runner controls the atomic transaction
+        const cleanSql = sql
+          .replace(/^\s*BEGIN\s*;\s*$/im, '')
+          .replace(/^\s*COMMIT\s*;\s*$/im, '');
+
         await client.query('BEGIN');
         try {
-          await client.query(sql);
+          await client.query(cleanSql);
           await client.query(
             'INSERT INTO schema_migrations (version) VALUES ($1)',
             [file]
