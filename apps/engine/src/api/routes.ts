@@ -175,6 +175,8 @@ export const apiRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
       // Business ID (from business accounts or default system tenant)
       const businessId = (req.headers['x-business-id'] as string) || (await getOrCreateDefaultBusiness());
 
+      console.log(`[API] 💳 Payment request: ${amountMinor} ${body.currency} via ${body.payment_method} [idempotency: ${idempotencyKey}]`);
+
       try {
         const result = await deps.orchestrator.execute({
           businessId,
@@ -186,6 +188,8 @@ export const apiRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
           batchId: body.batch_id,
           metadata: body.metadata,
         });
+
+        console.log(`[API] ✅ Payment ${result.payment.id} [${result.payment.status}] via ${result.payment.finalProvider || 'none'} (${result.attempts.length} attempts, replay: ${result.isReplay})`);
 
         const responsePayload = {
           id: result.payment.id,

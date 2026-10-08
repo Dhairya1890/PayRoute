@@ -25,6 +25,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     exposedHeaders: ['x-service-status', 'x-service-name', 'x-service-version', 'x-uptime-seconds'],
   });
 
+  // Request lifecycle logging for cloud observability (Render / production dashboard)
+  app.addHook('onResponse', async (req, reply) => {
+    const isProbe = req.url === '/health' || req.url === '/' || req.url === '/live';
+    if (isProbe && reply.statusCode < 400) {
+      return;
+    }
+    const duration = Math.round(reply.elapsedTime);
+    console.log(`[HTTP] ${req.method} ${req.url} -> ${reply.statusCode} (${duration}ms)`);
+  });
+
   // 2. Authentication hook (unless explicitly disabled for testing)
   if (!options.disableAuth) {
     app.addHook('preHandler', authenticateApiKey);

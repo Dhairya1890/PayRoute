@@ -174,6 +174,7 @@ export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
       }
 
       // Launch traffic generator asynchronously in background
+      console.log(`[Lab] 🚀 Starting traffic run batch ${batchId.slice(0, 8)} (${params.count} payments @ ${params.rate}/sec, method: ${params.method})`);
       (async () => {
         const delayBetweenRequestsMs = Math.max(10, Math.floor(1000 / params.rate));
 
@@ -211,6 +212,7 @@ export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
 
               // Intermediate scoreboard broadcast every 5 payments
               if ((i + 1) % 5 === 0 || i === params.count - 1) {
+                console.log(`[Lab] Batch ${batchId.slice(0, 8)}: processed ${i + 1}/${params.count} payments`);
                 try {
                   const intermediateSb = await computeScoreboard(batchId, deps, providerLabUrl);
                   labEventHub.broadcast('scoreboard_update', {
@@ -222,7 +224,7 @@ export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
                 }
               }
             } catch (err: any) {
-              // Log and continue traffic run
+              console.error(`[Lab] ❌ Payment ${i + 1}/${params.count} in batch ${batchId.slice(0, 8)} failed:`, err.message);
             }
 
             if (i < params.count - 1 && delayBetweenRequestsMs > 0) {
@@ -239,12 +241,13 @@ export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
         // When batch completes, broadcast final scoreboard update
         try {
           const scoreboard = await computeScoreboard(batchId, deps, providerLabUrl);
+          console.log(`[Lab] ✅ Batch ${batchId.slice(0, 8)} completed: ${scoreboard.succeeded}/${scoreboard.sent} succeeded, ${scoreboard.failed} failed, ${scoreboard.failovers} failovers`);
           labEventHub.broadcast('scoreboard_update', {
             batchId,
             scoreboard,
           });
-        } catch {
-          // ignore
+        } catch (err: any) {
+          console.error(`[Lab] ❌ Error computing final scoreboard for batch ${batchId.slice(0, 8)}:`, err.message);
         }
       })();
 
@@ -319,8 +322,12 @@ export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
 
       const batchId = crypto.randomUUID();
 
+      console.log(`[Scenario] 🎭 Initiating scenario "${name}" (batch: ${batchId.slice(0, 8)})`);
+
       // Run scenario asynchronously
-      runScenario(name, batchId, deps, providerLabUrl).catch(() => {});
+      runScenario(name, batchId, deps, providerLabUrl).catch((err) => {
+        console.error(`[Scenario] ❌ Scenario "${name}" (batch ${batchId.slice(0, 8)}) failed:`, err.message);
+      });
 
       return reply.status(202).send({
         scenario: name,
@@ -450,6 +457,8 @@ async function runScenario(
   deps: RouteDependencies,
   providerLabUrl: string
 ) {
+  console.log(`[Scenario] 🎬 Running scenario "${name}" (batch: ${batchId.slice(0, 8)})`);
+
   // Get business ID
   const businessId = await getOrCreateLabBusiness();
 
@@ -704,6 +713,7 @@ async function runScenario(
   };
 
   scenarioResultsCache.set(name, result);
+  console.log(`[Scenario] 🏁 Completed scenario "${name}" [${verdict}]: ${summary}`);
   labEventHub.broadcast('scoreboard_update', {
     batchId,
     scoreboard: details,

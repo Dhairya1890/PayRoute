@@ -3,6 +3,17 @@ import type { ProviderInfo, ScoreboardData, PaymentItem, ScenarioResult, Failure
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 const API_KEY = import.meta.env.VITE_API_KEY || 'pr_test_engine_key_secret';
 
+if (
+  typeof window !== 'undefined' &&
+  window.location.hostname !== 'localhost' &&
+  window.location.hostname !== '127.0.0.1' &&
+  !import.meta.env.VITE_API_URL
+) {
+  console.warn(
+    `[PayRoute UI] ⚠️ VITE_API_URL is not set. API calls are targeting "${API_BASE}". Set VITE_API_URL in your build environment variables to point to your deployed Render backend.`
+  );
+}
+
 const defaultHeaders = {
   'Content-Type': 'application/json',
   'x-api-key': API_KEY,
@@ -77,16 +88,23 @@ export async function startLabRun(params: {
     softDeclineShare: normalizedSoft,
   };
 
-  const res = await fetch(`${API_BASE}/lab/runs`, {
-    method: 'POST',
-    headers: defaultHeaders,
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({}));
-    throw new Error(errorBody.message || errorBody.error || 'Failed to start lab run');
+  try {
+    const res = await fetch(`${API_BASE}/lab/runs`, {
+      method: 'POST',
+      headers: defaultHeaders,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({}));
+      throw new Error(errorBody.message || errorBody.error || `HTTP ${res.status}: Failed to start lab run`);
+    }
+    return res.json();
+  } catch (err: any) {
+    if (err.message === 'Failed to fetch') {
+      throw new Error(`Cannot reach PayRoute backend at ${API_BASE}. Ensure the Render backend is online and VITE_API_URL is configured.`);
+    }
+    throw err;
   }
-  return res.json();
 }
 
 export async function fetchRunScoreboard(batchId: string): Promise<ScoreboardData> {
@@ -133,12 +151,19 @@ export async function fetchPaymentDetails(id: string): Promise<PaymentItem> {
 }
 
 export async function runScenario(name: string): Promise<{ batch_id: string }> {
-  const res = await fetch(`${API_BASE}/lab/scenarios/${name}/run`, {
-    method: 'POST',
-    headers: defaultHeaders,
-  });
-  if (!res.ok) throw new Error(`Failed to start scenario ${name}`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/lab/scenarios/${name}/run`, {
+      method: 'POST',
+      headers: defaultHeaders,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to start scenario ${name}`);
+    return res.json();
+  } catch (err: any) {
+    if (err.message === 'Failed to fetch') {
+      throw new Error(`Cannot reach PayRoute backend at ${API_BASE}. Ensure the Render backend is online and VITE_API_URL is configured.`);
+    }
+    throw err;
+  }
 }
 
 export async function fetchScenarioResult(name: string): Promise<ScenarioResult | null> {

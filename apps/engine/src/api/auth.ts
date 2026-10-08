@@ -43,6 +43,7 @@ export async function authenticateApiKey(req: FastifyRequest, reply: FastifyRepl
   }
 
   if (!providedKey || !timingSafeEqualStrings(providedKey, configuredKey)) {
+    console.warn(`[Auth] ⚠️ Rejected unauthorized ${req.method} ${req.url} (provided key: ${providedKey ? 'mismatched' : 'none'})`);
     reply.status(401).send({
       error: 'Unauthorized',
       message: 'Invalid or missing ENGINE_API_KEY',
