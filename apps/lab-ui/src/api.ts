@@ -167,10 +167,16 @@ export async function runScenario(name: string): Promise<{ batch_id: string }> {
 }
 
 export async function fetchScenarioResult(name: string): Promise<ScenarioResult | null> {
-  const res = await fetch(`${API_BASE}/lab/scenarios/${name}/results`, { headers: defaultHeaders });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Failed to fetch scenario result for ${name}`);
-  return res.json();
+  try {
+    const res = await fetch(`${API_BASE}/lab/scenarios/${name}/results`, { headers: defaultHeaders });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Failed to fetch scenario result for ${name}`);
+    const data = await res.json();
+    if (!data || data.status === 'not_run' || !data.verdict) return null;
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchLatestScoreboard(): Promise<ScoreboardData | null> {

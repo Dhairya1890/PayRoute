@@ -54,7 +54,7 @@ export class HealthTracker {
     this.providers = options.providers;
     this.methods = options.methods;
     this.channel = options.pubsubChannel ?? 'breaker:events';
-    this.refreshIntervalMs = options.refreshIntervalMs ?? 1000;
+    this.refreshIntervalMs = options.refreshIntervalMs ?? Number(process.env.HEALTH_TRACKER_INTERVAL_MS || 30000);
 
     // Initialize defaults in memory
     for (const p of this.providers) {
@@ -96,7 +96,7 @@ export class HealthTracker {
       this.degraded = true;
     }
 
-    // 3. Start 1-second background refresh loop
+    // 3. Start background refresh loop (default: every 30s to preserve Redis command quotas)
     this.intervalHandle = setInterval(() => {
       this.refreshSnapshot().catch(() => {
         this.degraded = true;
@@ -139,46 +139,52 @@ export class HealthTracker {
 
   /**
    * Refreshes health counters from Redis rolling window buckets.
+   * Batches all provider-method lookups into a single pipeline to minimize command count and network overhead.
    */
   async refreshSnapshot(nowSec?: number): Promise<void> {
     const currentSec = nowSec ?? Math.floor(Date.now() / 1000);
     const currentBucket = Math.floor(currentSec / 10);
 
     try {
+      const pipeline = this.redis.pipeline();
+
       for (const provider of this.providers) {
         for (const method of this.methods) {
-          // Read breaker state
           const breakerKey = `breaker:${provider}:${method}`;
-          const [stateVal, _openedAtVal, cooldownVal, consecVal] = await this.redis.hmget(
-            breakerKey,
-            'state',
-            'opened_at',
-            'cooldown_until',
-            'consecutive_opens'
-          );
+          pipeline.hmget(breakerKey, 'state', 'opened_at', 'cooldown_until', 'consecutive_opens');
+          for (let b = currentBucket - 5; b <= currentBucket; b++) {
+            pipeline.hgetall(`health:${provider}:${method}:${b}`);
+          }
+        }
+      }
 
-          // Aggregate rolling 60s window (6 buckets of 10s)
+      const results = await pipeline.exec();
+      if (!results) {
+        this.degraded = true;
+        return;
+      }
+
+      let resIdx = 0;
+      for (const provider of this.providers) {
+        for (const method of this.methods) {
+          const breakerEntry = results[resIdx++];
+          const breakerData = (breakerEntry?.[1] as string[] | undefined) || [];
+          const [stateVal, _openedAtVal, cooldownVal, consecVal] = breakerData;
+
           let totalOk = 0;
           let totalFail = 0;
           let totalDecline = 0;
           let latencySum = 0;
           let latencyCount = 0;
 
-          const pipeline = this.redis.pipeline();
           for (let b = currentBucket - 5; b <= currentBucket; b++) {
-            pipeline.hgetall(`health:${provider}:${method}:${b}`);
-          }
-          const bucketResults = await pipeline.exec();
-
-          if (bucketResults) {
-            for (const [, data] of bucketResults) {
-              const hash = (data as Record<string, string>) || {};
-              totalOk += Number(hash.ok || 0);
-              totalFail += Number(hash.fail || 0);
-              totalDecline += Number(hash.decline || 0);
-              latencySum += Number(hash.latency_sum || 0);
-              latencyCount += Number(hash.latency_count || 0);
-            }
+            const bucketEntry = results[resIdx++];
+            const hash = (bucketEntry?.[1] as Record<string, string> | undefined) || {};
+            totalOk += Number(hash.ok || 0);
+            totalFail += Number(hash.fail || 0);
+            totalDecline += Number(hash.decline || 0);
+            latencySum += Number(hash.latency_sum || 0);
+            latencyCount += Number(hash.latency_count || 0);
           }
 
           const smoothedRate = calculateSmoothedSuccessRate(totalOk, totalOk + totalFail);
@@ -194,7 +200,7 @@ export class HealthTracker {
             failCount: totalFail,
             declineCount: totalDecline,
             smoothedSuccessRate: smoothedRate,
-            p95LatencyMs: Math.round(avgLatency * 1.3), // Approximate p95
+            p95LatencyMs: Math.round(avgLatency * 1.3),
             lastUpdated: new Date(),
           });
         }

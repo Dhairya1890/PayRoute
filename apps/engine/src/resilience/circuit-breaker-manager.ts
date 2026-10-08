@@ -1,11 +1,11 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import type { Redis } from 'ioredis';
 import { OutcomeClass } from '@payroute/core';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import {
+  loadLuaScript,
+  RECORD_OUTCOME_LUA,
+  ACQUIRE_PROBE_LUA,
+  RECORD_PROBE_LUA,
+} from './lua-scripts.js';
 
 export type BreakerState = 'closed' | 'open' | 'half_open';
 
@@ -60,12 +60,10 @@ export class CircuitBreakerManager {
    * Loads Lua scripts into Redis script cache (SCRIPT LOAD) for high-performance execution.
    */
   async init(): Promise<void> {
-    const luaDir = path.join(__dirname, 'lua');
-
     const [recordOutcomeSrc, acquireProbeSrc, recordProbeSrc] = await Promise.all([
-      fs.readFile(path.join(luaDir, 'record_outcome.lua'), 'utf8'),
-      fs.readFile(path.join(luaDir, 'acquire_probe.lua'), 'utf8'),
-      fs.readFile(path.join(luaDir, 'record_probe.lua'), 'utf8'),
+      loadLuaScript('record_outcome.lua', RECORD_OUTCOME_LUA),
+      loadLuaScript('acquire_probe.lua', ACQUIRE_PROBE_LUA),
+      loadLuaScript('record_probe.lua', RECORD_PROBE_LUA),
     ]);
 
     const [sha1, sha2, sha3] = (await Promise.all([

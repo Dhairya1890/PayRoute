@@ -343,8 +343,10 @@ export const labRoutes = (deps: RouteDependencies): FastifyPluginAsync => {
       const { name } = req.params as { name: string };
       const cached = scenarioResultsCache.get(name);
       if (!cached) {
-        return reply.status(404).send({
-          error: 'NotFound',
+        return reply.status(200).send({
+          scenario: name,
+          status: 'not_run',
+          verdict: null,
           message: `No runs recorded yet for scenario "${name}"`,
         });
       }
