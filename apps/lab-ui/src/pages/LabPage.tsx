@@ -259,8 +259,8 @@ export const LabPage: FC<LabPageProps> = ({
       {/* ------------------------------------------------------------- */}
       {/* A. Run Toolbar (Traffic Generator) */}
       {/* ------------------------------------------------------------- */}
-      <section className="w-full h-[40px] border-b border-outline-variant flex items-center justify-between px-3 select-none bg-surface-container-lowest">
-        <div className="flex items-center gap-4">
+      <section className="w-full min-h-[40px] border-b border-outline-variant flex items-center justify-between px-3 select-none bg-surface-container-lowest overflow-x-auto scrollbar-none">
+        <div className="flex items-center gap-4 py-1.5 min-w-max">
           <div className="flex items-center gap-1.5 whitespace-nowrap">
             <label className="text-[12px] text-text-secondary whitespace-nowrap">Payments</label>
             <input

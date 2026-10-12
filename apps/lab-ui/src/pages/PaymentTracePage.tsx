@@ -171,9 +171,9 @@ export const PaymentTracePage: FC = () => {
   };
 
   return (
-    <div className="flex w-full h-[calc(100vh-40px)] text-on-surface font-sans">
+    <div className="flex flex-col md:flex-row w-full h-[calc(100vh-104px)] text-on-surface font-sans rounded-lg border border-outline-variant/30 overflow-hidden">
       {/* Left Panel (Payment List) */}
-      <div className="w-[320px] bg-surface-container-low border-r border-outline-variant/30 flex flex-col flex-shrink-0">
+      <div className="w-full md:w-[320px] max-md:max-h-[220px] bg-surface-container-low border-b md:border-b-0 md:border-r border-outline-variant/30 flex flex-col flex-shrink-0">
         <div className="p-3 border-b border-outline-variant/30 bg-surface-container-lowest">
           <div className="flex items-center gap-2 mb-2">
             <div className="relative flex-1">

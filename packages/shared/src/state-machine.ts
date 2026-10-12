@@ -68,7 +68,7 @@ export function transitionPayment(currentStatus: PaymentStatus, nextStatus: Paym
   if (!canTransitionPayment(currentStatus, nextStatus)) {
     throw new Error(
       `Illegal transition for Payment from "${currentStatus}" to "${nextStatus}". Terminal states cannot regress.`
-    );
+    );  
   }
   return nextStatus;
 }

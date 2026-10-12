@@ -119,11 +119,11 @@ export const ComparePage: FC = () => {
             <Sliders className="w-4 h-4 text-text-secondary" /> Policy Comparison: Baseline vs. Full Dynamic Engine
           </h2>
         </div>
-        <div className="p-3 flex items-center justify-between">
+        <div className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <p className="text-[12px] text-text-secondary">
             Empirical side-by-side benchmark: execute identical failure conditions through the real engine twice.
           </p>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <select
               value={selectedScenario}
               onChange={(e) => setSelectedScenario(e.target.value)}
@@ -162,7 +162,7 @@ export const ComparePage: FC = () => {
       )}
 
       {/* Comparison Grid */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* Baseline Card */}
         <div className="border border-outline-variant bg-surface rounded-lg flex flex-col">
           <div className="p-3 border-b border-outline-variant">

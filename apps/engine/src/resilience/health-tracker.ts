@@ -1,6 +1,7 @@
 import type { Redis } from 'ioredis';
 import { calculateSmoothedSuccessRate } from '@payroute/core';
 import { BreakerState } from './circuit-breaker-manager.js';
+import { loadLuaScript, AGGREGATE_HEALTH_LUA } from './lua-scripts.js';
 
 export interface ProviderHealthSnapshot {
   provider: string;
@@ -32,7 +33,8 @@ export interface HealthTrackerOptions {
  * - Read path latency: ~0ms (pure in-memory Map lookup).
  * - Real-time updates: Subscribes to Redis pub/sub channel ('breaker:events') so state transitions (trips, half-open probes)
  *   are propagated across all engine instances within milliseconds without waiting for polling ticks.
- * - Background loop: Reads rolling 10s health buckets once every 1s to refresh success rate and latency percentiles.
+ * - Background loop: Executes 1 atomic Lua script (aggregate_health.lua) once every 60s to refresh rolling success rates
+ *   and latency percentiles without exceeding serverless Redis command quotas.
  * - Degraded mode: If Redis connection drops, router uses the cached snapshot for up to 60s, then transitions to degraded.
  */
 export class HealthTracker {
@@ -42,6 +44,9 @@ export class HealthTracker {
   private readonly providers: string[];
   private readonly methods: string[];
   private readonly refreshIntervalMs: number;
+
+  private aggregateHealthSha: string | null = null;
+  private aggregateHealthSrc: string | null = null;
 
   private snapshots: Map<string, ProviderHealthSnapshot> = new Map();
   private intervalHandle: NodeJS.Timeout | null = null;
@@ -54,7 +59,7 @@ export class HealthTracker {
     this.providers = options.providers;
     this.methods = options.methods;
     this.channel = options.pubsubChannel ?? 'breaker:events';
-    this.refreshIntervalMs = options.refreshIntervalMs ?? Number(process.env.HEALTH_TRACKER_INTERVAL_MS || 30000);
+    this.refreshIntervalMs = options.refreshIntervalMs ?? Number(process.env.HEALTH_TRACKER_INTERVAL_MS || 60000);
 
     // Initialize defaults in memory
     for (const p of this.providers) {
@@ -89,14 +94,22 @@ export class HealthTracker {
         }
       });
 
-      // 2. Perform initial sync
+      // 2. Load aggregate health Lua script into Redis script cache (1 command)
+      this.aggregateHealthSrc = await loadLuaScript('aggregate_health.lua', AGGREGATE_HEALTH_LUA);
+      try {
+        this.aggregateHealthSha = (await this.redis.script('LOAD', this.aggregateHealthSrc)) as string;
+      } catch (err: any) {
+        console.warn('[HealthTracker] Script pre-load warning (will use EVAL fallback):', err?.message || err);
+      }
+
+      // 3. Perform initial sync
       await this.refreshSnapshot();
     } catch (err: any) {
       console.warn('[HealthTracker] Initial Redis handshake delayed, running with cached state:', err.message);
       this.degraded = true;
     }
 
-    // 3. Start background refresh loop (default: every 30s to preserve Redis command quotas)
+    // 4. Start background refresh loop (default: every 60s, 1 atomic Lua script per tick)
     this.intervalHandle = setInterval(() => {
       this.refreshSnapshot().catch(() => {
         this.degraded = true;
@@ -139,63 +152,74 @@ export class HealthTracker {
 
   /**
    * Refreshes health counters from Redis rolling window buckets.
-   * Batches all provider-method lookups into a single pipeline to minimize command count and network overhead.
+   * Executes 1 atomic Lua script (aggregate_health.lua) that evaluates all provider-method
+   * combinations and rolling buckets server-side, reducing 63 pipeline commands to 1 single Redis call.
    */
   async refreshSnapshot(nowSec?: number): Promise<void> {
     const currentSec = nowSec ?? Math.floor(Date.now() / 1000);
-    const currentBucket = Math.floor(currentSec / 10);
 
     try {
-      const pipeline = this.redis.pipeline();
+      let rawJson: string | null = null;
+      const providersArg = JSON.stringify(this.providers);
+      const methodsArg = JSON.stringify(this.methods);
 
-      for (const provider of this.providers) {
-        for (const method of this.methods) {
-          const breakerKey = `breaker:${provider}:${method}`;
-          pipeline.hmget(breakerKey, 'state', 'opened_at', 'cooldown_until', 'consecutive_opens');
-          for (let b = currentBucket - 5; b <= currentBucket; b++) {
-            pipeline.hgetall(`health:${provider}:${method}:${b}`);
+      // 1. Try atomic execution via SHA
+      if (this.aggregateHealthSha) {
+        try {
+          rawJson = (await this.redis.evalsha(
+            this.aggregateHealthSha,
+            0,
+            currentSec.toString(),
+            providersArg,
+            methodsArg
+          )) as string;
+        } catch (err: any) {
+          if (err?.message?.includes('NOSCRIPT') && this.aggregateHealthSrc) {
+            const reloadedSha = (await this.redis.script('LOAD', this.aggregateHealthSrc)) as string;
+            this.aggregateHealthSha = reloadedSha;
+            rawJson = (await this.redis.evalsha(
+              reloadedSha,
+              0,
+              currentSec.toString(),
+              providersArg,
+              methodsArg
+            )) as string;
+          } else {
+            throw err;
           }
         }
       }
 
-      const results = await pipeline.exec();
-      if (!results) {
-        this.degraded = true;
-        return;
+      // 2. Fallback to EVAL directly if SHA is not yet loaded
+      if (!rawJson && this.aggregateHealthSrc) {
+        rawJson = (await this.redis.eval(
+          this.aggregateHealthSrc,
+          0,
+          currentSec.toString(),
+          providersArg,
+          methodsArg
+        )) as string;
       }
 
-      let resIdx = 0;
-      for (const provider of this.providers) {
-        for (const method of this.methods) {
-          const breakerEntry = results[resIdx++];
-          const breakerData = (breakerEntry?.[1] as string[] | undefined) || [];
-          const [stateVal, _openedAtVal, cooldownVal, consecVal] = breakerData;
-
-          let totalOk = 0;
-          let totalFail = 0;
-          let totalDecline = 0;
-          let latencySum = 0;
-          let latencyCount = 0;
-
-          for (let b = currentBucket - 5; b <= currentBucket; b++) {
-            const bucketEntry = results[resIdx++];
-            const hash = (bucketEntry?.[1] as Record<string, string> | undefined) || {};
-            totalOk += Number(hash.ok || 0);
-            totalFail += Number(hash.fail || 0);
-            totalDecline += Number(hash.decline || 0);
-            latencySum += Number(hash.latency_sum || 0);
-            latencyCount += Number(hash.latency_count || 0);
-          }
+      // 3. Process atomic response
+      if (rawJson) {
+        const items = JSON.parse(rawJson);
+        for (const item of items) {
+          const totalOk = Number(item.ok_count || 0);
+          const totalFail = Number(item.fail_count || 0);
+          const totalDecline = Number(item.decline_count || 0);
+          const latencySum = Number(item.latency_sum || 0);
+          const latencyCount = Number(item.latency_count || 0);
 
           const smoothedRate = calculateSmoothedSuccessRate(totalOk, totalOk + totalFail);
           const avgLatency = latencyCount > 0 ? latencySum / latencyCount : 150;
 
-          this.snapshots.set(this.key(provider, method), {
-            provider,
-            method,
-            breakerState: (stateVal as BreakerState) || 'closed',
-            consecutiveOpens: consecVal ? Number(consecVal) : 0,
-            cooldownUntil: cooldownVal ? Number(cooldownVal) : null,
+          this.snapshots.set(this.key(item.provider, item.method), {
+            provider: item.provider,
+            method: item.method,
+            breakerState: (item.breaker_state as BreakerState) || 'closed',
+            consecutiveOpens: Number(item.consecutive_opens || 0),
+            cooldownUntil: item.cooldown_until ? Number(item.cooldown_until) : null,
             okCount: totalOk,
             failCount: totalFail,
             declineCount: totalDecline,
@@ -204,11 +228,77 @@ export class HealthTracker {
             lastUpdated: new Date(),
           });
         }
-      }
 
-      this.lastSuccessfulRedisSync = new Date();
-      this.degraded = false;
-    } catch {
+        this.lastSuccessfulRedisSync = new Date();
+        this.degraded = false;
+        return;
+      }
+    } catch (luaErr) {
+      // If Lua script execution encounters an error, fallback to safe pipeline
+      try {
+        const currentBucket = Math.floor(currentSec / 10);
+        const pipeline = this.redis.pipeline();
+
+        for (const provider of this.providers) {
+          for (const method of this.methods) {
+            const breakerKey = `breaker:${provider}:${method}`;
+            pipeline.hmget(breakerKey, 'state', 'opened_at', 'cooldown_until', 'consecutive_opens');
+            for (let b = currentBucket - 5; b <= currentBucket; b++) {
+              pipeline.hgetall(`health:${provider}:${method}:${b}`);
+            }
+          }
+        }
+
+        const results = await pipeline.exec();
+        if (results) {
+          let resIdx = 0;
+          for (const provider of this.providers) {
+            for (const method of this.methods) {
+              const breakerEntry = results[resIdx++];
+              const breakerData = (breakerEntry?.[1] as string[] | undefined) || [];
+              const [stateVal, _openedAtVal, cooldownVal, consecVal] = breakerData;
+
+              let totalOk = 0;
+              let totalFail = 0;
+              let totalDecline = 0;
+              let latencySum = 0;
+              let latencyCount = 0;
+
+              for (let b = currentBucket - 5; b <= currentBucket; b++) {
+                const bucketEntry = results[resIdx++];
+                const hash = (bucketEntry?.[1] as Record<string, string> | undefined) || {};
+                totalOk += Number(hash.ok || 0);
+                totalFail += Number(hash.fail || 0);
+                totalDecline += Number(hash.decline || 0);
+                latencySum += Number(hash.latency_sum || 0);
+                latencyCount += Number(hash.latency_count || 0);
+              }
+
+              const smoothedRate = calculateSmoothedSuccessRate(totalOk, totalOk + totalFail);
+              const avgLatency = latencyCount > 0 ? latencySum / latencyCount : 150;
+
+              this.snapshots.set(this.key(provider, method), {
+                provider,
+                method,
+                breakerState: (stateVal as BreakerState) || 'closed',
+                consecutiveOpens: consecVal ? Number(consecVal) : 0,
+                cooldownUntil: cooldownVal ? Number(cooldownVal) : null,
+                okCount: totalOk,
+                failCount: totalFail,
+                declineCount: totalDecline,
+                smoothedSuccessRate: smoothedRate,
+                p95LatencyMs: Math.round(avgLatency * 1.3),
+                lastUpdated: new Date(),
+              });
+            }
+          }
+          this.lastSuccessfulRedisSync = new Date();
+          this.degraded = false;
+          return;
+        }
+      } catch {
+        // Fallback also failed
+      }
       this.degraded = true;
     }
   }

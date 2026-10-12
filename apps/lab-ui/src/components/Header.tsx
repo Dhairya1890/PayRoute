@@ -66,9 +66,9 @@ export const Header: FC<HeaderProps> = ({
         </div>
 
         {/* Right: Policy & Strategy Configuration Selects */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-mono text-text-tertiary">Policy:</span>
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <span className="text-[11px] font-mono text-text-tertiary hidden sm:inline">Policy:</span>
             <select
               value={policy}
               onChange={(e) => onPolicyChange(e.target.value)}
@@ -78,8 +78,8 @@ export const Header: FC<HeaderProps> = ({
               <option value="baseline">baseline</option>
             </select>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-mono text-text-tertiary">Strategy:</span>
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <span className="text-[11px] font-mono text-text-tertiary hidden sm:inline">Strategy:</span>
             <select
               value={strategy}
               onChange={(e) => onStrategyChange(e.target.value)}
