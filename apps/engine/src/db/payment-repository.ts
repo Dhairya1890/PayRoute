@@ -314,6 +314,32 @@ export class PaymentRepository {
     return this.mapAttemptRow(res.rows[0]);
   }
 
+  /**
+   * Serializes orchestration for one payment across concurrent requests and
+   * engine instances. The lock is session-level so it can be held across
+   * provider HTTP calls (which must not run inside a DB transaction).
+   */
+  async withOrchestrationLock<T>(paymentId: string, work: () => Promise<T>): Promise<T> {
+    const poolLike = this.db as pg.Pool;
+    const isPool = typeof poolLike.connect === 'function' && 'totalCount' in this.db;
+    const client = isPool ? await poolLike.connect() : (this.db as pg.PoolClient);
+    const release = isPool;
+
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtext($1))', [paymentId]);
+      return await work();
+    } finally {
+      try {
+        await client.query('SELECT pg_advisory_unlock(hashtext($1))', [paymentId]);
+      } catch {
+        // Connection may already be broken; releasing the client still drops the lock.
+      }
+      if (release) {
+        client.release();
+      }
+    }
+  }
+
   async getPaymentById(paymentId: string): Promise<PaymentRecord | null> {
     const res = await this.db.query('SELECT * FROM payments WHERE id = $1', [paymentId]);
     return res.rows.length > 0 ? this.mapPaymentRow(res.rows[0]) : null;

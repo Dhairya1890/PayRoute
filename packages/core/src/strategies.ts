@@ -90,14 +90,14 @@ export function selectProvider(
     } else if (!c.supportedCurrencies.includes(context.currency)) {
       eligible = false;
       exclusionReason = `Provider does not support currency ${context.currency}`;
+    } else if (c.breakerState === 'open') {
+      eligible = false;
+      exclusionReason = 'Circuit breaker is open (high recent failure rate)';
+    } else if (c.breakerState === 'half_open' && !c.hasProbeSlot) {
+      eligible = false;
+      exclusionReason = 'Circuit breaker is half-open with no probe slots available';
     } else if (context.policy === 'full') {
-      if (c.breakerState === 'open') {
-        eligible = false;
-        exclusionReason = 'Circuit breaker is open (high recent failure rate)';
-      } else if (c.breakerState === 'half_open' && !c.hasProbeSlot) {
-        eligible = false;
-        exclusionReason = 'Circuit breaker is half-open with no probe slots available';
-      } else if (c.backoffUntil && c.backoffUntil > context.now) {
+      if (c.backoffUntil && c.backoffUntil > context.now) {
         eligible = false;
         exclusionReason = `Provider in rate-limit backoff window until ${c.backoffUntil.toISOString()}`;
       } else if ((context.perProviderAttempts[c.name] ?? 0) >= context.maxAttemptsPerProvider) {

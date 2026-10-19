@@ -128,6 +128,7 @@ describe('PayRoute Engine API - End-to-End Integration', () => {
       payload: { amount_minor: 1000, currency: 'INR' },
     });
     expect(badAuth.statusCode).toBe(401);
+
   });
 
   it('POST /payments validates required Idempotency-Key and body fields', async () => {

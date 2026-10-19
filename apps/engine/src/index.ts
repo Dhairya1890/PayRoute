@@ -32,6 +32,10 @@ export * from './worker/resolution-worker.js';
 import { runMigrations } from './db/migrate.js';
 
 export async function startServer(port = 3000): Promise<void> {
+  if (!process.env.ENGINE_API_KEY) {
+    throw new Error('ENGINE_API_KEY must be configured before starting the engine');
+  }
+
   // 1. Run migrations to ensure PostgreSQL schema is initialized
   try {
     const applied = await runMigrations();

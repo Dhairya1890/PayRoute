@@ -117,7 +117,7 @@ if outcome_class == 'config_error' and state ~= 'open' then
     local cooldown = math.min(300, 30 * math.floor(math.pow(2, consecutive_opens - 1)))
     local cooldown_until = now_sec + cooldown
 
-    redis.call('HMSET', KEYS[2],
+    redis.call('HMSET', KEYS[1],
         'state', 'open',
         'opened_at', now_sec,
         'cooldown_until', cooldown_until,
@@ -135,7 +135,7 @@ if outcome_class == 'config_error' and state ~= 'open' then
         consecutive_opens = consecutive_opens,
         reason = 'config_error'
     })
-    redis.call('PUBLISH', KEYS[3], event)
+    redis.call('PUBLISH', KEYS[2], event)
     return 'tripped_immediate'
 end
 
@@ -252,7 +252,7 @@ else
     local cooldown = math.min(300, 30 * math.floor(math.pow(2, consecutive_opens - 1)))
     local cooldown_until = now_sec + cooldown
 
-    redis.call('HMSET', KEYS[2],
+    redis.call('HMSET', KEYS[1],
         'state', 'open',
         'opened_at', now_sec,
         'cooldown_until', cooldown_until,
@@ -270,7 +270,7 @@ else
         consecutive_opens = consecutive_opens,
         reason = 'probe_failed'
     })
-    redis.call('PUBLISH', KEYS[3], event)
+    redis.call('PUBLISH', KEYS[2], event)
     return 'open'
 end
 `;

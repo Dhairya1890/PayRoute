@@ -203,8 +203,9 @@ export class ResolutionWorker {
               amountMinor: BigInt(paymentRow.amount_minor as string | number),
               currency: paymentRow.currency as string,
               paymentMethod: paymentRow.payment_method as string,
-              customerReference: paymentRow.customer_reference as string,
-              batchId: paymentRow.batch_id as string,
+              customerReference: (paymentRow.customer_reference as string) ?? '',
+              batchId: (paymentRow.batch_id as string) ?? undefined,
+              metadata: (paymentRow.metadata as Record<string, unknown>) ?? {},
             }).catch((err) => {
               console.error(`ResolutionWorker failed to resume orchestration for payment ${paymentId}:`, err);
             });

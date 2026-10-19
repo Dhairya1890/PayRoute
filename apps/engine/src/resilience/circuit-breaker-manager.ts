@@ -176,8 +176,13 @@ export class CircuitBreakerManager {
         reason,
       };
     } catch (err: any) {
-      console.warn('[CircuitBreakerManager] acquireProbe failed (fallback to allowed):', err?.message || err);
-      return { allowed: true, state: 'closed', probesInflight: 0 };
+      console.warn('[CircuitBreakerManager] acquireProbe failed (probe denied):', err?.message || err);
+      return {
+        allowed: false,
+        state: 'open',
+        probesInflight: 0,
+        reason: 'Unable to confirm probe admission because Redis is unavailable',
+      };
     }
   }
 

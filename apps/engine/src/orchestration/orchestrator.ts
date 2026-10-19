@@ -6,8 +6,8 @@ import {
   PolicyType,
   calculateBackoffWithFullJitter,
 } from '@payroute/core';
-import { parseMoney } from '@payroute/shared';
-import { ProviderAdapter } from '@payroute/providers';
+import { parseMoney, isTerminalPaymentStatus } from '@payroute/shared';
+import { GetStatusResult, ProviderAdapter } from '@payroute/providers';
 import { PaymentRepository, PaymentRecord, AttemptRecord } from '../db/payment-repository.js';
 import { CircuitBreakerManager } from '../resilience/circuit-breaker-manager.js';
 import { HealthTracker } from '../resilience/health-tracker.js';
@@ -43,6 +43,16 @@ export interface ExecutePaymentResult {
   payment: PaymentRecord;
   attempts: AttemptRecord[];
   isReplay: boolean;
+}
+
+/**
+ * Whether a replay should continue the orchestration loop instead of returning
+ * the stored record. Terminal and unknown/requires_action payments must not
+ * fail over here — unknown is owned by the resolution worker until charge
+ * knowledge is proven.
+ */
+export function resumeIfIncomplete(payment: Pick<PaymentRecord, 'status'>): boolean {
+  return payment.status === 'created' || payment.status === 'processing';
 }
 
 /**
@@ -100,17 +110,27 @@ export class PaymentOrchestrator {
       metadata: params.metadata,
     });
 
-    let currentPayment = initialPayment;
+    return this.paymentRepo.withOrchestrationLock(initialPayment.id, async () => {
+      const locked = await this.paymentRepo.getPaymentWithAttempts(initialPayment.id);
+      if (!locked) {
+        throw new Error(`Payment "${initialPayment.id}" missing after idempotent insert`);
+      }
 
-    // If exact replay, return current record (prevents concurrent replays from racing orchestration)
-    if (isReplay) {
-      const attempts = await this.paymentRepo.getAttemptsForPayment(currentPayment.id);
-      return { payment: currentPayment, attempts, isReplay: true };
-    }
+      let currentPayment = locked.payment;
+      const attempts: AttemptRecord[] = [...locked.attempts];
 
-    const attempts: AttemptRecord[] = await this.paymentRepo.getAttemptsForPayment(currentPayment.id);
-    const deadlineAt = currentPayment.deadlineAt.getTime();
-    let softDeclineCascades = 0;
+      // Exact replay of a finished or unknown payment: return the record.
+      // created/processing replays resume (crash recovery, worker failover).
+      if (isReplay && !resumeIfIncomplete(currentPayment)) {
+        return { payment: currentPayment, attempts, isReplay: true };
+      }
+
+      // Client sync deadline applies to the first in-flight request. A resume
+      // (retry after crash, or worker failover) gets a fresh attempt window.
+      const deadlineAt = isReplay
+        ? Date.now() + this.syncDeadlineMs
+        : currentPayment.deadlineAt.getTime();
+      let softDeclineCascades = 0;
 
     // Track per-provider attempt counts
     const attemptsCountByProvider: Record<string, number> = {};
@@ -127,6 +147,19 @@ export class PaymentOrchestrator {
     }
 
     try {
+      const openAttempt = [...attempts].reverse().find((a) => a.status === 'started');
+      if (openAttempt && currentPayment.status === 'processing') {
+        const resolved = await this.resolveOpenAttempt({
+          payment: currentPayment,
+          attempt: openAttempt,
+          attempts,
+        });
+        currentPayment = resolved.payment;
+        if (isTerminalPaymentStatus(currentPayment.status) || currentPayment.status === 'unknown') {
+          return { payment: currentPayment, attempts, isReplay };
+        }
+      }
+
       // Move to processing immediately as orchestration begins
       if (currentPayment.status === 'created') {
         currentPayment = await this.paymentRepo.transitionStatus(
@@ -184,6 +217,14 @@ export class PaymentOrchestrator {
       for (const [name, adapter] of this.adapters.entries()) {
         const health = this.healthTracker.getSnapshot(name, paymentMethod);
         const dbConfig = dynamicConfigs?.find((c) => c.name === name);
+        // The snapshot is intentionally cheap, but an OPEN circuit becomes a
+        // probe candidate as soon as its cooldown expires. Redis still grants
+        // the actual probe slot atomically after selection.
+        const breakerState = health.breakerState === 'open' &&
+          health.cooldownUntil !== null &&
+          Math.floor(Date.now() / 1000) >= health.cooldownUntil
+          ? 'half_open'
+          : health.breakerState;
 
         candidateList.push({
           name,
@@ -193,8 +234,8 @@ export class PaymentOrchestrator {
           timeoutMs: dbConfig ? dbConfig.timeoutMs : 5000,
           supportedMethods: dbConfig?.supportedMethods ?? [...adapter.capabilities.supportedMethods],
           supportedCurrencies: dbConfig?.supportedCurrencies ?? [...adapter.capabilities.supportedCurrencies],
-          breakerState: health.breakerState,
-          hasProbeSlot: health.breakerState === 'half_open',
+          breakerState,
+          hasProbeSlot: breakerState === 'half_open',
           backoffUntil: null,
           stats: {
             ok: health.okCount,
@@ -238,13 +279,18 @@ export class PaymentOrchestrator {
       }
 
       // Check if provider is in half-open state and requires probe slot
-      const health = this.healthTracker.getSnapshot(chosenProviderName, paymentMethod);
+      const selectedCandidate = candidateList.find((candidate) => candidate.name === chosenProviderName);
       let isProbe = false;
-      if (health.breakerState === 'half_open') {
+      if (selectedCandidate?.breakerState === 'half_open') {
         const probeRes = await this.breakerManager.acquireProbe(chosenProviderName, paymentMethod);
         isProbe = probeRes.allowed;
         if (!isProbe) {
-          // Probe slots full, exclude this provider and loop
+          // Redis is authoritative. Exclude the provider for this payment's
+          // current selection loop, including under baseline policy.
+          if (selectedCandidate) {
+            selectedCandidate.breakerState = 'open';
+            selectedCandidate.hasProbeSlot = false;
+          }
           attemptsCountByProvider[chosenProviderName] = 999;
           continue;
         }
@@ -501,5 +547,91 @@ export class PaymentOrchestrator {
       }
       throw unhandledErr;
     }
+    });
+  }
+
+  /**
+   * Crash recovery: an attempt was committed before the provider HTTP call
+   * finished. Query status before creating a new attempt (zero double-charge).
+   */
+  private async resolveOpenAttempt(params: {
+    payment: PaymentRecord;
+    attempt: AttemptRecord;
+    attempts: AttemptRecord[];
+  }): Promise<{ payment: PaymentRecord }> {
+    const { attempt, attempts } = params;
+    let currentPayment = params.payment;
+    const adapter = this.adapters.get(attempt.provider);
+    const idempotencyRef = `${currentPayment.id}_${attempt.attemptNo}`;
+    const attemptIndex = attempts.findIndex((a) => a.id === attempt.id);
+
+    if (!adapter) {
+      const updatedAttempt = await this.paymentRepo.updateAttemptOutcome({
+        attemptId: attempt.id,
+        status: 'unknown',
+        errorClass: 'ambiguous',
+      });
+      if (attemptIndex >= 0) attempts[attemptIndex] = updatedAttempt;
+      currentPayment = await this.paymentRepo.transitionStatus(
+        currentPayment.id,
+        'processing',
+        'unknown',
+        {
+          nextActionTime: new Date(Date.now() + 15000),
+          needsReview: true,
+        }
+      );
+      return { payment: currentPayment };
+    }
+
+    let statusResult: GetStatusResult | null = null;
+    try {
+      statusResult = await adapter.getStatus(idempotencyRef, attempt.providerRef ?? undefined);
+    } catch {
+      statusResult = null;
+    }
+
+    if (statusResult && statusResult.status === 'succeeded') {
+      const updatedAttempt = await this.paymentRepo.updateAttemptOutcome({
+        attemptId: attempt.id,
+        status: 'succeeded',
+        providerRef: statusResult.providerRef,
+      });
+      if (attemptIndex >= 0) attempts[attemptIndex] = updatedAttempt;
+      currentPayment = await this.paymentRepo.transitionStatus(
+        currentPayment.id,
+        'processing',
+        'succeeded',
+        { finalProvider: attempt.provider }
+      );
+      return { payment: currentPayment };
+    }
+
+    if (statusResult && (statusResult.status === 'not_found' || statusResult.status === 'failed')) {
+      const updatedAttempt = await this.paymentRepo.updateAttemptOutcome({
+        attemptId: attempt.id,
+        status: 'failed',
+        errorClass: 'ambiguous',
+      });
+      if (attemptIndex >= 0) attempts[attemptIndex] = updatedAttempt;
+      return { payment: currentPayment };
+    }
+
+    const updatedAttempt = await this.paymentRepo.updateAttemptOutcome({
+      attemptId: attempt.id,
+      status: 'unknown',
+      errorClass: 'ambiguous',
+    });
+    if (attemptIndex >= 0) attempts[attemptIndex] = updatedAttempt;
+    currentPayment = await this.paymentRepo.transitionStatus(
+      currentPayment.id,
+      'processing',
+      'unknown',
+      {
+        nextActionTime: new Date(Date.now() + 15000),
+        needsReview: false,
+      }
+    );
+    return { payment: currentPayment };
   }
 }

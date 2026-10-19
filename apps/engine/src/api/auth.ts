@@ -20,26 +20,31 @@ export function timingSafeEqualStrings(a: string, b: string): boolean {
  * Expects `x-api-key` header or `Authorization: Bearer <key>`.
  */
 export async function authenticateApiKey(req: FastifyRequest, reply: FastifyReply): Promise<void> {
-  // Public health/readiness/liveness/monitoring/config/chat endpoints do not require auth
-  const publicPaths = ['/', '/health', '/ready', '/live', '/config', '/chat'];
-  const urlPath = req.url.split('?')[0] || '';
-  if (publicPaths.some((p) => urlPath === p || (p !== '/' && urlPath.startsWith(`${p}/`)))) {
+  // Only exact operational probe paths are public. Application endpoints,
+  // including config and chat, require credentials.
+  const publicPaths = new Set(['/', '/health', '/ready', '/live']);
+  const urlPath = req.url.split('?')[0] || '/';
+  if (publicPaths.has(urlPath)) {
     return;
   }
 
-  const configuredKey = process.env.ENGINE_API_KEY || 'pr_test_engine_key_secret';
+  const configuredKey = process.env.ENGINE_API_KEY;
+  if (!configuredKey) {
+    reply.status(503).send({
+      error: 'ServiceUnavailable',
+      message: 'API authentication is not configured',
+    });
+    return;
+  }
 
   const authHeader = req.headers['authorization'];
   const apiKeyHeader = req.headers['x-api-key'] as string;
-  const queryApiKey = (req.query as any)?.api_key as string | undefined;
 
   let providedKey: string | null = null;
   if (apiKeyHeader) {
     providedKey = apiKeyHeader;
   } else if (authHeader && authHeader.startsWith('Bearer ')) {
     providedKey = authHeader.slice(7).trim();
-  } else if (queryApiKey) {
-    providedKey = queryApiKey;
   }
 
   if (!providedKey || !timingSafeEqualStrings(providedKey, configuredKey)) {
